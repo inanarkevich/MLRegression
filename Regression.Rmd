@@ -1,0 +1,816 @@
+---
+title: "Regression Model"
+author: "Katarzyna Majcher, Ina Narkevich"
+date: "May 24, 2019"
+output: 
+  html_document:
+    theme: yeti
+    highlight: haddock
+    toc: true
+    toc_float: true
+---
+<h2><font color="#3b5998">Introduction</font></h2>
+
+<br>The dataset was taken from Kaggle: https://www.kaggle.com/agailloty/house-price-in-canada
+<br>In the dataset, there are 546 observations with 12 variables describing aspects of houses. 
+<br><b>Goal</b> - predict the price of houses. 
+
+<h2><font color="##3b5998">1. Data Preparation</font></h2>
+
+```{r, warning=FALSE, message=FALSE}
+# Load libraries
+options(knitr.table.format = "html")
+options(digits=5)
+library(readxl)
+library(dplyr)
+library(funModeling) 
+library(tidyverse) 
+library(Hmisc)
+library(kableExtra)
+library(caret)
+library(ggplot2)
+library(gmodels)
+library(vcd)
+library(ggpubr)
+library(FSelector)
+library(Information)
+library(smbinning)
+library(lattice)
+library(dplyr)
+library(caret)
+library(bestNormalize)
+library(corrplot)
+```
+
+
+```{r setup, include=FALSE}
+setwd("C:\\Users\\User\\OneDrive\\UNIVERSITY\\Machine Learning\\Regression project")
+```
+
+```{r}
+# Load data
+
+house_prices<- read_xlsx ("Maison.xlsx") 
+str(house_prices)
+```
+Initially in this dataset, variables are in French. All the variables are numeric.
+
+
+```{r cars}
+# Translate in English
+house_prices<-house_prices %>% 
+  rename(price=PRIX, area=SUPERFICIE, rooms=CHAMBRES, bathroom=SDB, floors=ETAGES, driveway=ALLEE, gameroom=SALLEJEU,              cellar=CAVE, gas=GAZ, air=AIR, garage=GARAGES, location=SITUATION)
+```
+
+<h4><font color="##3b5998">Explaratory Data Analysis</font></h3>
+
+
+<h4><font color="##3b5998">Get a summary for the data frame</font></h4>
+```{r, results=FALSE}
+house_prices_status<-df_status(house_prices)
+```
+
+```{r}
+kable(house_prices_status) %>%kable_styling(bootstrap_options = c("striped", "hover"))
+```
+We can state that there are no missing values in the dataset.
+
+```{r}
+# Change the format of columns
+house_prices$rooms <- as.integer(house_prices$rooms)
+house_prices$bathroom <- as.integer(house_prices$bathroom)
+house_prices$floors <- as.integer(house_prices$floors)
+house_prices$driveway <- as.factor(house_prices$driveway)
+house_prices$gameroom <- as.factor(house_prices$gameroom)
+house_prices$cellar <- as.factor(house_prices$cellar)
+house_prices$gas <- as.factor(house_prices$gas)
+house_prices$air <- as.factor(house_prices$air)
+house_prices$garage <- as.integer(house_prices$garage)
+house_prices$location <- as.factor(house_prices$location)
+```
+
+
+```{r fig1, fig.height = 1, fig.width = 6}
+# Explore the frequency and percentage for categorical variables
+freq(house_prices)
+```
+<br>The majority of houses have a driveway, but don't have gameroom, cellar, gas and air conditioner. 
+
+```{r}
+# Profiling numerical data
+profiling_num(house_prices)
+```
+
+```{r fig10,  fig.align = "center"}
+# Plot numerical data
+plot_num(house_prices)
+```
+<br>The plot above shows that price and area are skewed to right. The largest part of houses have 3 rooms, 1 bathroom, 1 or 2 floors and don't have garage.
+
+```{r, fig2, fig.height = 5.2, fig.width = 6, fig.align = "center", warning=FALSE, message=FALSE}
+# Visualize a correlation matrix
+
+num.house_prices <- house_prices %>%
+                    keep(is.numeric)
+cor.data <- cor(num.house_prices, use="pairwise.complete.obs") 
+corrplot.mixed(cor.data, tl.pos = "lt",tl.col = 'black')
+```
+<br>There is moderate correlation between price and area (0.54), price and the number of bathrooms (0.52), price and number of floors (0.42).
+
+```{r fig7, out.width = '100%'}
+
+rooms_price<-ggplot(data=house_prices, aes(x=factor(rooms), y=price))+
+        geom_boxplot(col='blue') + labs(x='Rooms')
+bath_price<-ggplot(data=house_prices, aes(x=factor(bathroom), y=price))+
+        geom_boxplot(col='blue') + labs(x='Bathrooms')
+floor_price<-ggplot(data=house_prices, aes(x=factor(floors), y=price))+
+        geom_boxplot(col='blue') + labs(x='Floors')
+air_price<-ggplot(data=house_prices, aes(x=factor(air), y=price))+
+        geom_boxplot(col='blue') + labs(x='Air')
+garage_price<-ggplot(data=house_prices, aes(x=factor(garage), y=price))+
+        geom_boxplot(col='blue') + labs(x='Garage')
+gas_price<-ggplot(data=house_prices, aes(x=factor(gas), y=price))+
+        geom_boxplot(col='blue') + labs(x='Gas')
+ggarrange(rooms_price,bath_price, floor_price,air_price, garage_price, gas_price)#, widths = 1:1:1:1)
+```
+
+<br>The more the rooms, the higher the median price of house. However the median price of houses with 6 rooms, is less than for houses with 4 or 5 rooms.
+<br>Also the more the bathrooms, the higher the median price of house. Although for the houses with 1 or 2 bathrooms, there are a lot outliers.
+<br>The same dependency for floors, air conditioner, and gas.
+<br>Regarding garages, the price of house is growing, when the number of garages is increasing till 3, then for 4 garages the median price of house has decreased. 
+
+<h4><font color="##3b5998">Explore target variable</font></h4>
+
+```{r}
+# Summary
+summary(house_prices$price)
+```
+
+<br>Price is the dependent variable for prediction. According to the assumptions of Linear Regression, data should be normally distributed.
+
+```{r}
+# Draw a higtogram to figure out the distribution of price
+options(scipen=10000)
+ggplot(house_prices, aes(x = price, fill = ..count..)) +
+  geom_histogram(binwidth = 5000) +
+  ggtitle("Histogram of price") +
+  ylab("Count of houses") +
+  xlab("Housing Price") + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+<br>From the plot above, the distribution of price variable is skewed to right. Consequently, a log term of price should be generated for linear regression. 
+
+```{r}
+# Log term of price
+
+house_prices$lprice <- log(house_prices$price)
+```
+
+```{r}
+# Draw a higtogram to figure out the distribution of log SalePrice
+
+ggplot(house_prices, aes(x = lprice, fill = ..count..)) +
+  geom_histogram(binwidth = 0.05) +
+  ggtitle("Histogram of log price") +
+  ylab("Count of houses") +
+  xlab("Housing Price") + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+<br>We can see, that now lprice is normally distributed.
+
+<h2><font color="##3b5998">2. Model Fitting</font></h2>
+
+
+<h3><font color="##3b5998">2.1. Test and train datasets</font></h3>
+```{r}
+set.seed(123)
+which_train <- createDataPartition(house_prices$lprice, p = 0.7, list = FALSE) 
+# divide data into two samples
+house_prices.train <- house_prices[which_train,]
+house_prices.test <- house_prices[-which_train,]
+```
+
+<h3><font color="##3b5998">2.2. Linear regression</font></h3>
+
+```{r}
+# Define model formula
+model_formula <- lprice~area+rooms+bathroom+floors+driveway+gameroom+cellar+gas+air+garage+location
+
+# Define training control
+set.seed(123)
+ctrl_cv5 <- trainControl(method = "cv",
+                          number = 5)
+```
+
+
+```{r}
+# Train the model, which will serve as a benchmark
+house_prices.lin <- train(model_formula, 
+                          data = house_prices.train, 
+                          method = "lm",
+                          trControl = ctrl_cv5)
+# Summarize the results
+summary(house_prices.lin)
+
+```
+
+```{r, echo=FALSE}
+regressionMetrics <- function(real, predicted) {
+  # Mean Squera Error
+  MSE <- mean((real - predicted)^2)
+  # Root Mean Squera Error
+  RMSE <- sqrt(MSE)
+  # Mean Absolute Error
+  MAE <- mean(abs(real - predicted))
+  # Median Absolute Error
+  MedAE <- median(abs(real - predicted))
+  # Mean Logarithmic Absolute Error
+  MSLE <- mean((log(1 + real) - log(1 + predicted))^2)
+  # Total Sum of Squares
+  TSS <- sum((real - mean(real))^2)
+  # Explained Sum of Squares
+  RSS <- sum((predicted - real)^2)
+  # R2
+  R2 <- 1 - RSS/TSS
+  
+  result <- data.frame(MSE, RMSE, MAE, MedAE, MSLE, R2)
+  return(result)
+}
+
+house_prices.lin.train <- predict(house_prices.lin, house_prices.train)
+house_prices.lin.test <- predict(house_prices.lin, house_prices.test)
+```
+
+```{r}
+# Apply house_prices.lin model for test and train datasets
+options(digits=6)
+house_prices.linr1<-regressionMetrics(real = house_prices.train$price, predicted = exp(house_prices.lin.train))
+
+house_prices.linr2<-regressionMetrics(real = house_prices.test$price, predicted = exp(house_prices.lin.test))
+
+kable(cbind(house_prices.linr1, house_prices.linr2)) %>%
+  add_header_above(c("train" = 6, "test" = 6)) %>%
+  kable_styling(c("striped", "bordered"))
+```
+<br>For train dataset we have R2=0.682695, while for test dataset it equals to 0.676254, which is rather similar. (benchmark: train - 0.682695, test - 0.676254)
+<br>RMSE equals to 14536.7 and 16270.3 for train and test datasets correspondingly. (benchmark: train - 14536.7, test - 16270.3)
+<br>MAE equals to 10696.7 and 11281.3 for train and test datasets correspondingly.(benchmark: train - 10696.7, test - 11281.3)
+
+<h3><font color="##3b5998">2.3. Ridge regression</font></h3>
+
+```{r}
+# Define tuneGrid
+parameters_ridge <- expand.grid(alpha = 0, # ridge 
+                                lambda = exp(log(1000)*seq(-10, 2, length.out = 200)) )
+
+#Train ridge regression model
+set.seed(123)
+house_prices.ridge <- train(model_formula,
+                     data = house_prices.train,
+                     method = "glmnet", 
+                     tuneGrid = parameters_ridge,
+                     trControl = ctrl_cv5)
+
+# Plot
+plot(house_prices.ridge)
+
+# best lambda
+house_prices.ridge$bestTune$lambda
+```
+Best lambda value (giving the lowest error forecasts based on cross validation) = 0.0252354.
+
+
+```{r}
+# on the results of glmnet() one can use the predict function to return parameters for any lambda
+
+predict(house_prices.ridge$finalModel, # stored model
+        s = house_prices.ridge$bestTune$lambda, # lambda
+        type = "coefficients")
+
+# Apply house_prices.ridge model for test and train datasets
+house_prices.ridger1<-regressionMetrics(real = house_prices.train$price,
+                  predicted = exp(predict(house_prices.ridge, 
+                                      house_prices.train)
+                  ))
+
+house_prices.ridger2<-regressionMetrics(real = house_prices.test$price,
+                  predicted = exp(predict(house_prices.ridge, 
+                                      house_prices.test)
+                  ))
+
+kable(cbind(house_prices.ridger1, house_prices.ridger2)) %>%
+  add_header_above(c("train" = 6, "test" = 6)) %>%
+  kable_styling(c("striped", "bordered")) 
+```
+<br>For train dataset we have R2=0.680895, while for test dataset it equals to 0.673707. The results are almost the same as for benchmark model, just a litlle bit worser. (benchmark: train - 0.682695, test - 0.676254)
+<br>RMSE equals to 14577.9 and 16334.2 for train and test datasets correspondingly. Also a litlle bit worser in comparison with benchmark.(benchmark: train - 14536.7, test - 16270.3)
+<br>MAE equals to 10699 and 11151.9 for train and test datasets correspondingly. For train dataset MAE is a litlle bit worser in comparison with benchmark, but for test dataset there is a little improvement (benchmark: train - 10696.7, test - 11281.3).
+
+<h3><font color="##3b5998">2.4. LASSO regression</font></h3>
+
+```{r}
+# Define tuneGrid
+parameters_lasso <- expand.grid(alpha = 1, # lasso 
+                                lambda = exp(log(10000)*seq(-10, 2, length.out = 200)) )
+
+set.seed(123)
+house_prices.lasso <- train(model_formula,
+                     data = house_prices.train,
+                     method = "glmnet", 
+                     tuneGrid = parameters_lasso,
+                     trControl = ctrl_cv5)
+
+plot(house_prices.lasso)
+
+# best lambda
+house_prices.lasso$bestTune$lambda
+```
+Best lambda value (giving the lowest error forecasts based on cross validation) = 0.000594113, which is very close to 0 (similar to OLS).
+
+
+
+```{r}
+# on the results of glmnet() one can use the predict function to return parameters for any lambda
+
+predict(house_prices.lasso$finalModel, # stored model
+        s = house_prices.lasso$bestTune$lambda, # lambda
+        type = "coefficients")
+
+
+
+house_prices.lassor1<-regressionMetrics(real = house_prices.train$price,
+                  predicted = exp(predict(house_prices.lasso, 
+                                      house_prices.train))
+                  )
+
+house_prices.lassor2<-regressionMetrics(real = house_prices.test$price,
+                  predicted = exp(predict(house_prices.lasso, 
+                                      house_prices.test))
+                  )
+
+kable(cbind(house_prices.lassor1, house_prices.lassor2)) %>%
+  add_header_above(c("train" = 6, "test" = 6)) %>%
+  kable_styling(c("striped", "bordered")) 
+```
+
+<br>For train dataset we have R2=0.675112, while for test dataset it equals to 0.673707. The results for train dataset are worser, but for test dataset the same result as for ridge regression. (benchmark: train - 0.682695, test - 0.676254)
+<br>RMSE equals to 16299 and 16334.2 for train and test datasets correspondingly. The results for train dataset are worser, but for test dataset the same result as for ridge regression. (benchmark: train - 14536.7, test - 16270.3)
+<br>MAE equals to 11275.3 and 11151.9 for train and test datasets correspondingly. Also the results for train dataset are worser, but for test dataset the same result as for ridge regression. (benchmark: train - 10696.7, test - 11281.3).
+
+<h3><font color="##3b5998">2.5. KNN</font></h3>
+
+```{r}
+# Fnd optimal value of k using cross validation for tuning model parameters
+
+different_k <- data.frame(k = 1:100)
+
+
+# Run the training
+set.seed(123)
+
+house_prices.knn_cv_scaled <- 
+  train(model_formula,
+        data = house_prices.train, 
+        method = "knn",
+        trControl = ctrl_cv5,
+        tuneGrid = different_k,
+
+        preProcess = c("range"))
+
+plot(house_prices.knn_cv_scaled)
+
+```
+
+```{r}
+# Apply house_prices.knn_cv_scaled model for test and train datasets
+house_prices.knn_cv_scaledr1<-regressionMetrics(real = house_prices.train$price,
+                  predicted = exp(predict(house_prices.knn_cv_scaled, 
+                                      house_prices.train)
+                  ))
+
+
+house_prices.knn_cv_scaledr2<-regressionMetrics(real = house_prices.test$price,
+                  predicted = exp(predict(house_prices.knn_cv_scaled, 
+                                      house_prices.test)
+                  ))
+
+kable(cbind(house_prices.knn_cv_scaledr1, house_prices.knn_cv_scaledr2)) %>%
+  add_header_above(c("train" = 6, "test" = 6)) %>%
+  kable_styling(c("striped", "bordered")) 
+```
+<br>The results of KNN model are much worser in comparion with linear regression, especially for test dataset.
+
+<h2><font color="##3b5998">3. Feature Selection</font></h2>
+
+<h3><font color="##3b5998">3.1. Near zero variance predictors</font></h3>
+<br>Apply nearZeroVar function from caret package to find those columns from the data for which variance is near to zero(or zero).
+
+```{r}
+nearZeroVar(house_prices.train, saveMetrics= TRUE)
+```
+Based on the obtained results, we can conclude that there are no variables with zero variance, but there is one variable with near to zero variance: gas.
+
+<h3><font color="##3b5998">3.2. Filter-based variable importance</font></h3>
+
+<br>Calculate the absolute value of the t statistic in the model with one variable (each separately) for filtering the most important variables using filterVarImp().
+
+```{r}
+#select categorical and continious variables
+cat.house_prices <- c("driveway","gameroom","cellar","gas","air","location")
+con.house_prices <- c("area", "rooms", "bathroom", "floors","garage")
+
+# lets see the example
+importance_t <-
+  filterVarImp(x = house_prices.train[, c(cat.house_prices,
+                                     con.house_prices)], 
+               y = house_prices.train$price)
+
+importance_t
+cutoff.k(importance_t, k = 8)
+```
+
+<br>Based on the results of filterVarImp() function we can see, that the most important variables are: area, bathroom, air, and the least important are: gameroom, cellar, gas.
+
+<br>As both methods (nearZeroVar and filterVarImp()) suggested that gas variable potentially can be excluded, we created new model furmula and run linear regression for it.
+```{r}
+# Define model formula
+model_formula_without_garage <- lprice~area+rooms+bathroom+floors+driveway+gameroom+cellar+gas+air+location
+```
+
+<h5><font color="##3b5998">Linear regression</font></h5>
+```{r}
+set.seed(123)
+
+# Train the model
+house_prices.lin_wo_garage <- train(model_formula_without_garage, 
+                                    data = house_prices.train, 
+                                    method = "lm",
+                                    trControl = ctrl_cv5)
+
+
+house_prices.lin_wo_garager1<-regressionMetrics(real = house_prices.train$price,
+                  predicted = exp(predict(house_prices.lin_wo_garage, 
+                                      house_prices.train))
+                  )
+
+
+house_prices.lin_wo_garager2<-regressionMetrics(real = house_prices.test$price,
+                  predicted = exp(predict(house_prices.lin_wo_garage, 
+                                      house_prices.test))
+                  )
+
+kable(cbind(house_prices.lin_wo_garager1, house_prices.lin_wo_garager2)) %>%
+  add_header_above(c("train" = 6, "test" = 6)) %>%
+  kable_styling(c("striped", "bordered")) 
+
+```
+<br>For train dataset we have R2=0.668364, while for test dataset it equals to 0.651246. The results are worser in comparison with benchmark(with gas variable). (benchmark: train - 0.682695, test - 0.676254)
+<br>The same is appplicable for RMSE and MAE, which are also worser in comparison with benchmark (benchmark RMSE: train - 14536.7, test - 16270.3, benchmark MAE: train - 10696.7, test - 11281.3).
+
+
+<h3><font color="##3b5998">3.3. Backward elimination</font></h3>
+ 
+<br>Apply backward elimination for linear regression to identify independent variables which have most impact on dependent variables.
+
+```{r}
+set.seed(123)
+
+house_prices.lm_backward <- 
+  train(model_formula,
+        data = house_prices.train, 
+        method = "lmStepAIC",
+        direction = "backward", 
+        trControl = ctrl_cv5)
+
+
+summary(house_prices.lm_backward)
+
+```
+
+Based on results above, gameroom was excluded.
+
+```{r, warning=FALSE}
+# Apply house_prices.ridge model for test and train datasets
+
+house_prices.lm_backwardr1<-regressionMetrics(real = house_prices.train$price,
+                  predicted = exp(predict(house_prices.lm_backward, 
+                                      house_prices.train))
+                  )
+
+
+house_prices.lm_backwardr2<-regressionMetrics(real = house_prices.test$price,
+                  predicted = exp(predict(house_prices.lm_backward, 
+                                      house_prices.test))
+                  )
+
+
+kable(cbind(house_prices.lm_backwardr1, house_prices.lm_backwardr2)) %>%
+  add_header_above(c("train" = 6, "test" = 6)) %>%
+  kable_styling(c("striped", "bordered")) 
+
+```
+
+<br>For train dataset we have R2=0.682777, RMSE=14534.9, MAE=10665.6, which are a little bit higher in comparison with benchmark model. But for test dataset R2=0.666757, RMSE=16507.2, MAE=11520.6, and that results are worser in comparison with benchmark (benchmark R2: train - 0.682695, test - 0.676254, benchmark RMSE: train - 14536.7, test - 16270.3, benchmark MAE: train - 10696.7, test - 11281.3).
+
+<h2><font color="##3b5998">4. Feature Generation</font></h2>
+
+<h3><font color="##3b5998">4.1. Box Cox and Yeo-Johnson's transformations</font></h3>
+
+<br>Explore the numeric variable - area.
+```{r, f11,  fig.align = "center", warning=FALSE}
+##Explore area.
+area<-ggplot(house_prices.train, aes(area)) + geom_density(fill="blue")
+area
+```
+
+```{r, warning=FALSE}
+# apply boxcos transformation for area
+
+house_area_boxcox <- boxcox(house_prices.train$area)
+
+# lets check the structure of results
+str(house_area_boxcox)
+
+# $lambda is the optimal lambda
+
+house_area_boxcox$lambda
+
+# x.t includes transformed data and add it as a column in the dataset
+
+house_prices.train$area_boxcox <- house_area_boxcox$x.t
+
+# apply the Yeo-Johnson's transformation
+
+area_yeojohnson <- yeojohnson(house_prices.train$area)
+
+house_prices.train$area_yeojohnson <- area_yeojohnson$x.t
+
+```
+
+```{r}
+areabc<-ggplot(house_prices.train, aes(house_prices.train$area_boxcox)) + geom_density(fill="blue")
+areayeojohnson<-ggplot(house_prices.train, aes(area_yeojohnson)) + geom_density(fill="blue")
+ggarrange(areabc,areayeojohnson, widths = 1:1)
+```
+
+We can see that after applying Box Cox and Yeo-Johnson's transformations area variable has become more normally distributed.
+
+
+```{r, warning=FALSE}
+# Train a model using box cox transformation
+set.seed(123)
+
+house_prices.boxcox <- 
+  train(model_formula,  
+        data = house_prices.train,
+        method = "lm",
+        preProcess = "BoxCox",
+        trControl = ctrl_cv5)
+house_prices.boxcox$resample
+# Apply it to our model
+
+house_prices.boxcoxr1<-regressionMetrics(real = house_prices.train$price,
+                  predicted = exp(predict(house_prices.boxcox, 
+                                      house_prices.train)))
+
+house_prices.boxcoxr2<-regressionMetrics(real = house_prices.test$price,
+                  predicted = exp(predict(house_prices.boxcox, 
+                                      house_prices.test)))
+
+kable(cbind(house_prices.boxcoxr1, house_prices.boxcoxr2)) %>%
+  add_header_above(c("train" = 6, "test" = 6)) %>%
+  kable_styling(c("striped", "bordered")) 
+```
+<br> We can notice, that a model using Box Cox transformation has the improvement of the results in comparison with benchmark for test dataset, while for train dataset benchmark is still a little bit better. (benchmark R2: train - 0.682695, test - 0.676254, benchmark RMSE: train - 14536.7, test - 16270.3, benchmark MAE: train - 10696.7, test - 11281.3).
+
+
+```{r, warning=FALSE}
+# Train a model using Yeo-Johnson's transformation
+set.seed(123)
+
+house_price.YeoJohnson <- 
+  train(model_formula,  
+        data = house_prices.train,
+        method = "lm",
+        preProcess = "YeoJohnson",
+        trControl = ctrl_cv5)
+
+# Apply it to the data
+
+house_price.YeoJohnsonr1<-regressionMetrics(real = house_prices.train$price,
+                  predicted = exp(predict(house_price.YeoJohnson, 
+                                      house_prices.train)))
+
+house_price.YeoJohnsonr2<-regressionMetrics(real = house_prices.test$price,
+                  predicted = exp(predict(house_price.YeoJohnson, 
+                                      house_prices.test)))
+
+kable(cbind(house_price.YeoJohnsonr1, house_price.YeoJohnsonr2)) %>%
+  add_header_above(c("train" = 6, "test" = 6)) %>%
+  kable_styling(c("striped", "bordered")) 
+```
+<br> A model using Yeo-Johnson's transformation has the same results for test and train datasets as benchmark (benchmark R2: train - 0.682695, test - 0.676254, benchmark RMSE: train - 14536.7, test - 16270.3, benchmark MAE: train - 10696.7, test - 11281.3).
+
+
+<h3><font color="##3b5998">4.2. Functional transformations</font></h3>
+
+```{r, warning=FALSE}
+#add interactions between area and rooms
+model_formula_i1 <- lprice~area+rooms+bathroom+floors+driveway+gameroom+cellar+gas+air+garage+location+area:rooms
+set.seed(123)
+# Train the model
+house_prices.lin_i1 <- train(model_formula_i1, 
+                          data = house_prices.train, 
+                          method = "lm",
+                          trControl = ctrl_cv5)
+
+# apply it to our model
+
+house_prices.lin_i1r1<-regressionMetrics(real = house_prices.train$price,
+                  predicted = exp(predict(house_prices.lin_i1, 
+                                      house_prices.train)))
+
+house_prices.lin_i1r2<-regressionMetrics(real = house_prices.test$price,
+                  predicted = exp(predict(house_prices.lin_i1, 
+                                      house_prices.test)))
+
+kable(cbind(house_prices.lin_i1r1, house_prices.lin_i1r2)) %>%
+  add_header_above(c("train" = 6, "test" = 6)) %>%
+  kable_styling(c("striped", "bordered"))
+
+```
+<br> After adding the interaction between area and rooms the model has almost the same results for train data. For test data R2 and and RMSE are a little bit better in comparison with benchmark (benchmark R2: train - 0.682695, test - 0.676254, benchmark RMSE: train - 14536.7, test - 16270.3, benchmark MAE: train - 10696.7, test - 11281.3).
+
+
+```{r, warning=FALSE}
+#add interactions between area and rooms, area and bathroom, area and air
+model_formula_i2 <- lprice~area+rooms+bathroom+floors+driveway+gameroom+cellar+gas+air+garage+location+area:rooms+area:bathroom+area:air
+set.seed(123)
+# Train the model
+house_prices.lin_i2 <- train(model_formula_i2, 
+                          data = house_prices.train, 
+                          method = "lm",
+                          trControl = ctrl_cv5)
+
+
+# apply it to our model
+house_prices.lin_i2$resample
+
+house_prices.lin_i2r1<-regressionMetrics(real = house_prices.train$price,
+                  predicted = exp(predict(house_prices.lin_i2, 
+                                      house_prices.train)))
+
+house_prices.lin_i2r2<-regressionMetrics(real = house_prices.test$price,
+                  predicted = exp(predict(house_prices.lin_i2, 
+                                      house_prices.test)))
+
+kable(cbind(house_prices.lin_i2r1, house_prices.lin_i2r2)) %>%
+  add_header_above(c("train" = 6, "test" = 6)) %>%
+  kable_styling(c("striped", "bordered"))
+```
+<br> We can observe further improvement for test dataset of the results after adding 2 more interactions after area:rooms+area:bathroom (benchmark R2: train - 0.682695, test - 0.676254, benchmark RMSE: train - 14536.7, test - 16270.3, benchmark MAE: train - 10696.7, test - 11281.3).
+
+```{r, warning=FALSE}
+# Train a model using model formula model_formula_i2 and box cox transformation
+set.seed(123)
+
+house_prices.boxcox_i2 <- 
+  train(model_formula_i2,  
+        data = house_prices.train,
+        method = "lm",
+        preProcess = "BoxCox",
+        trControl = ctrl_cv5)
+house_prices.boxcox$resample
+# Apply it to our model
+
+house_prices.boxcox_i2r1<-regressionMetrics(real = house_prices.train$price,
+                  predicted = exp(predict(house_prices.boxcox_i2, 
+                                      house_prices.train)))
+
+house_prices.boxcox_i2r2<-regressionMetrics(real = house_prices.test$price,
+                  predicted = exp(predict(house_prices.boxcox_i2, 
+                                      house_prices.test)))
+
+kable(cbind(house_prices.boxcox_i2r1, house_prices.boxcox_i2r2)) %>%
+  add_header_above(c("train" = 6, "test" = 6)) %>%
+  kable_styling(c("striped", "bordered")) 
+```
+<br> The results for test dataset are better than in comparison with benchmark (benchmark R2: train - 0.682695, test - 0.676254, benchmark RMSE: train - 14536.7, test - 16270.3, benchmark MAE: train - 10696.7, test - 11281.3).
+
+<h2><font color="##3b5998">5. Compare models</font></h2>
+```{r, echo=FALSE, include=FALSE}
+house_prices.linr1
+house_prices.linr2
+house_prices.ridger1
+house_prices.ridger2
+house_prices.lassor1
+house_prices.lassor2
+house_prices.knn_cv_scaledr1
+house_prices.knn_cv_scaledr2
+house_prices.lin_wo_garager1
+house_prices.lin_wo_garager2
+house_prices.lm_backwardr1
+house_prices.lm_backwardr2
+house_prices.boxcoxr1
+house_prices.boxcoxr2
+house_price.YeoJohnsonr1
+house_price.YeoJohnsonr2
+house_prices.lin_i1r1
+house_prices.lin_i1r2
+house_prices.lin_i2r1
+house_prices.lin_i2r2
+house_prices.boxcox_i2r1
+house_prices.boxcox_i2r2
+```
+
+<h3><font color="##3b5998">5.1. Results of predictions on train data</font></h3>
+```{r, warning=FALSE}
+# Create the table with the results for train data 
+model_names<-c("house_prices.lin","house_prices.ridge","house_prices.lasso","house_prices.knn_cv_scaled","house_prices.lin_wo_garage","house_prices.lm_backward","house_prices.boxcox","house_price.YeoJohnson","house_prices.lin_i1","house_prices.lin_i2","house_prices.boxcox_i2")
+train_res<-rbind(house_prices.linr1,house_prices.ridger1,house_prices.lassor1,house_prices.knn_cv_scaledr1,house_prices.lin_wo_garager1, house_prices.lm_backwardr1,house_prices.boxcoxr1, house_price.YeoJohnsonr1, house_prices.lin_i1r1, house_prices.lin_i2r1, house_prices.boxcox_i2r1)
+train_res$model<-model_names
+
+library(dplyr)
+train_res %>%
+  mutate(
+    model = model,
+    MSE = MSE,
+    RMSE =cell_spec(RMSE, color = ifelse(RMSE < 14530, "white", "black"),
+                  background = ifelse(RMSE < 14530, "#3b5998", "white"),
+                  bold = ifelse(RMSE < 14530, T, F)),
+    MAE =cell_spec(MAE, color = ifelse(MAE < 10666, "white", "black"),
+                  background = ifelse(MAE < 10666, "#3b5998", "white"),
+                  bold = ifelse(MAE < 10666, T, F)),
+    MedAE =MedAE,
+    MSLE =MSLE,
+    R2 =cell_spec(R2, color = ifelse(R2 > 0.683017, "white", "black"),
+                  background = ifelse(R2 > 0.683017, "#3b5998", "white"),
+                  bold = ifelse(R2 > 0.683017, T, F))) %>%
+
+  select(model, MSE, RMSE,MAE,MedAE,MSLE,R2) %>%
+  kable(format = "html", escape = F) %>%
+  kable_styling("striped", full_width = F)
+
+```
+<h3><font color="##3b5998">5.2. Results of predictions on test data</font></h3>
+```{r, warning=FALSE}
+# Create the table with the results for test data 
+test_res<-rbind(house_prices.linr2,house_prices.ridger2,house_prices.lassor2,house_prices.knn_cv_scaledr2,house_prices.lin_wo_garager2, house_prices.lm_backwardr2,house_prices.boxcoxr2, house_price.YeoJohnsonr2, house_prices.lin_i1r2, house_prices.lin_i2r2, house_prices.boxcox_i2r2)
+test_res$model<-model_names
+
+library(dplyr)
+options(digits = 5)
+test_res %>%
+  mutate(
+    model = model,
+    MSE = MSE,
+    RMSE =cell_spec(RMSE, color = ifelse(RMSE < 16108, "white", "black"),
+                  background = ifelse(RMSE < 16108, "#3b5998", "white"),
+                  bold = ifelse(RMSE < 16108, T, F)),
+    MAE =cell_spec(MAE, color = ifelse(MAE < 11153, "white", "black"),
+                  background = ifelse(MAE < 11153, "#3b5998", "white"),
+                  bold = ifelse(MAE < 11153, T, F)),
+    MedAE =MedAE,
+    MSLE =MSLE,
+    R2 =cell_spec(R2, color = ifelse(R2 > 0.6827, "white", "black"),
+                  background = ifelse(R2 > 0.6827, "#3b5998", "white"),
+                  bold = ifelse(R2 > 0.6825, T, F))) %>%
+  select(model, MSE, RMSE,MAE,MedAE,MSLE,R2) %>%
+  kable(format = "html", escape = F) %>%
+  kable_styling("striped", full_width = F)
+```
+
+Based on the comparison we can conclude, that the best model is house_prices.boxcox_i2r2 - linear regression with boxcox transformations and with adding the interactions.
+
+The plots below show the final model.
+<h5><font color="##3b5998">Regression results plot</font></h5>
+
+```{r, warning=FALSE}
+lares::mplot_lineal(tag = house_prices.test$price,
+                    score = exp(predict(house_prices.boxcox_i2,
+                              house_prices.test)),
+                    subtitle = "House prices Regression Model",
+                    model_name = "house_prices.boxcox_i2 model")
+
+
+```
+<h5><font color="##3b5998">Distribution plot</font></h5>
+```{r}
+lares::mplot_density(tag = house_prices.test$price,
+                    score = exp(predict(house_prices.boxcox_i2,
+                              house_prices.test)),
+                    subtitle = "House prices Regression Model",
+                    model_name = "simple_model_02")
+```
+
+
+<h5><font color="##3b5998">Splits by quantiles</font></h5>
+```{r fig5, out.width = '90%', warning=FALSE}
+lares::mplot_splits(house_prices.test$price,
+                    score = exp(predict(house_prices.boxcox_i2,
+                              house_prices.test)),
+                    split = 6)
+```
+<br>The plot above shows the result of arranging all scores or predicted values in sorted quantiles, from worst to best, and see how the classification goes compared to our test set. 
+
