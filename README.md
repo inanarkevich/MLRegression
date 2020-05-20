@@ -16,7 +16,7 @@ In the dataset, there are 546 observations with 12 variables describing aspects 
 <br>In addition, there were applied <b>feature selection methods</b>:
 <ul style="list-style-type:disc;">
   <li>Near zero variance predictors,</li>
-  <li>Filter-based variable importance,</li>,
+  <li>Filter-based variable importance,</li>
   <li>Backward elimination,</li>
 </ul>  
 
